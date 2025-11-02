@@ -1,0 +1,109 @@
+﻿@page "/verify"
+
+@using OnlineSettlement.Data
+@using OnlineSettlement.Model
+
+@inject ZarinPalService ZarinPalService
+@inject NavigationManager Navigation
+@inject IDebitRepository DebitRepository
+@inject IPaymentRepository PaymentRepository
+
+@if (isVerifying)
+{
+    <p>در حال بررسی پرداخت...</p>
+}
+else if (!string.IsNullOrEmpty(refId))
+{
+    <div class="alert alert-success">
+        پرداخت موفق! شماره پیگیری: @refId
+    </div>
+}
+else
+{
+    <div class="alert alert-danger">
+        پرداخت ناموفق!  @error
+    </div>
+}
+
+@code {
+    private string authority;
+    private string status;
+    private string refId;
+    private bool isVerifying = true;
+    private decimal amount =0 ;
+    private string error;
+    private Debit debit;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+
+            authority = query["Authority"];
+            status = query["Status"];
+
+            var payment = await PaymentRepository.GetPaymentByVerifyCode(authority);
+
+
+            if (status == "OK")
+            {
+                try
+                {
+                    refId = await ZarinPalService.VerifyPayment(authority, payment.Amount);
+                    payment.PaymentStatus = 4;
+                    payment.ResultCode = refId;
+                    payment.VerifyMessage = "پرداخت با موفقیت انجام شد";
+                    await PaymentRepository.UpdatePaymentAsync(payment);
+                    await DebitRepository.UpdateDebitStatus(payment.DebitId);
+                    //ارسال پیامک تشکر
+                    await SendSms(payment.DebitId, refId);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    refId = null;
+                    payment.PaymentStatus = 3;
+                    payment.ResultCode = refId;
+                    payment.VerifyMessage = "پرداخت با خطا مواجه شد";
+                    await PaymentRepository.UpdatePaymentAsync(payment);
+                }
+            }
+            else
+            {
+
+                payment.PaymentStatus = 3;
+                payment.ResultCode = refId;
+                payment.VerifyMessage = "پرداخت با خطا مواجه شد";
+                await PaymentRepository.UpdatePaymentAsync(payment);
+            }
+
+
+
+
+            isVerifying = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+    private async Task SendSms(int debitId,string resultcode)
+    {
+        try
+        {
+            var debit = await DebitRepository.GetDebitByIdAsync(debitId);
+
+
+            SmsHelper smshelper = new SmsHelper();
+            //smshelper.LikeToLikeSend(CurrentDebit.Mobile, message);
+            var result = await smshelper.SendPayConfirm(debit.Mobile, debit.FullName, resultcode);
+
+        }
+        catch (Exception ex)
+        {
+            Console.Write(ex.Message);
+        }
+
+    }
+}

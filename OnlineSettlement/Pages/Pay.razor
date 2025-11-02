@@ -1,0 +1,146 @@
+﻿@page "/Pay/{paylink}"
+
+@using OnlineSettlement.Data
+@using OnlineSettlement.Model
+
+@inject IDebitRepository DebitRepository
+@inject IPaymentRepository PaymentRepository
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject ZarinPalService ZarinPalService
+
+
+
+<PageTitle>صفحه پرداخت - پارسیس</PageTitle>
+@if (isloading)
+{
+    <div class="text-center mt-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="sr-only">درحال بارگذاری اطلاعات</span>
+        </div>
+    </div>
+}
+
+@if (!isFindDebit && !isPayed)
+{
+    <div class="text-center mt-5">
+        <div class="alert alert-info">اطلاعات پرداخت یافت نشد</div>
+    </div>
+}
+else if (isPayed)
+{
+    <div class="text-center mt-5">
+        <div class="alert alert-info">این صورتحساب قبلا پرداخت شده است</div>
+    </div>
+}
+else
+{
+        <div class="text-center mt-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="sr-only">در حال ارجاع به درگاه پرداخت</span>
+            </div>
+        </div>
+}
+
+@if(!string.IsNullOrEmpty(error))
+{
+    <div class="text-center mt-5">
+        <div class="alert alert-info">@error</div>
+    </div>
+}
+
+
+
+@code {
+    private bool isloading { get; set; } = true;
+    private bool isFindDebit{ get; set; }=false;
+    private bool isPayed { get; set; } = false;
+    private string error{ get; set; }
+    private Debit debit { get; set; } = null;
+
+    [Parameter]
+    public string paylink{ get; set; }
+    protected override async Task OnParametersSetAsync()
+    {
+        await InvokeAsync(StateHasChanged);
+
+        await FindDebit();
+        if (isFindDebit && !isPayed)
+        {
+            await Payment();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if(firstRender)
+        {
+            // await FindDebit();
+            // if (isFindDebit && !isPayed)
+            // {
+            //     await Payment();
+            // }
+            await InvokeAsync(StateHasChanged);
+        }
+
+    }
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        StateHasChanged();
+    }
+
+    private async Task Payment()
+    {
+        try
+        {
+            string desc="تسویه صورت حساب شرکت محسولات پزشکی پارسیس";
+            if(!string.IsNullOrEmpty(debit.Description))
+            {
+                desc = debit.Description;
+            }
+
+            var authority = await ZarinPalService.RequestPayment(debit.DebitAmount, desc,debit.Mobile);
+
+            var payment = new Payment
+                {
+                    CreateDate = DateTime.Now,
+                    DebitId = debit.DebitId,
+                    PaymentStatus=1,//درحال پرداخت
+                    VerifyCode=authority,
+                    Amount=debit.DebitAmount
+                };
+
+            await PaymentRepository.AddPaymentAsync(payment);
+
+            Navigation.NavigateTo($"{URLs.gateWayUrl}{authority}");
+
+
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task FindDebit()
+    {
+        if(!string.IsNullOrEmpty(paylink))
+        {
+            debit = await DebitRepository.GetDebitByLinkIdAsync(paylink);
+            if(debit!=null)
+            {
+                isPayed=debit.IsPayed;
+                isFindDebit = true;
+                if (isPayed)
+                    isFindDebit = false;
+            }
+        }else
+        {
+            isFindDebit = false;
+        }
+        isloading = false;
+        //  await InvokeAsync(StateHasChanged);
+    }
+
+}

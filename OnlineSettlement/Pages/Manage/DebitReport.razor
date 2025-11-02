@@ -1,0 +1,235 @@
+﻿@page "/manage/debit-report"
+@using OnlineSettlement.Model
+@using OnlineSettlement.Data
+@using OnlineSettlement.Pages.Component
+@using OfficeOpenXml
+@using System.IO
+
+@inject IDebitRepository DebitRepository
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+
+<script>
+    function saveAsFile(filename, base64Data) {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + base64Data;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+<style>
+    body {
+    direction: rtl;
+    text-align: right;
+    }
+    .filter-box {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    }
+    .paid-true {
+    background-color: #d4edda !important;
+    }
+    .paid-false {
+    background-color: #f8d7da !important;
+    }
+</style>
+<script src="scripts/datepickerlanguage.js" suppress-error="BL9992"></script>
+
+<div class="container mt-4">
+    <h3>گزارش بدهی‌ها</h3>
+
+    <div class="filter-box">
+        <EditForm Model="@filter" OnValidSubmit="@ApplyFilter">
+            <div class="row">
+                <div class="col-md-3">
+                    <label>تاریخ شروع</label>
+                    <_Date Event_SelectedDate="_selectedDateFrom" />
+                </div>
+
+                <div class="col-md-3">
+                    <label>تاریخ پایان</label>
+                    <_Date Event_SelectedDate="_selectedDateTo" />
+                </div>
+
+                <div class="col-md-3">
+                    <label>وضعیت پرداخت</label>
+                    <select class="form-control" @bind="filter.PaymentStatus">
+                        <option value="0">همه</option>
+                        <option value="1">پرداخت شده</option>
+                        <option value="2">پرداخت نشده</option>
+                    </select>
+                </div>
+
+                <div class="col-md-3 align-self-end">
+                    <button type="submit" class="btn btn-primary">اعمال فیلتر</button>
+                    <button type="button" class="btn btn-success" @onclick="ClearFilter">پاک کردن فیلتر</button>
+                    <button type="button" class="btn btn-success" @onclick="BackToMain">بازگشت</button>
+                </div>
+            </div>
+        </EditForm>
+    </div>
+    <button @onclick="DownloadExcel" class="btn btn-primary">دانلود اکسل</button>
+
+    <div class="table-responsive" style="width:99%;">
+        <table class="table table-bordered table-hover" style="width:99%;">
+            <thead class="thead-dark">
+                <tr>
+                    <th>نام و نام خانوادگی</th>
+                    <th>کد ملی</th>
+                    <th>موبایل</th>
+                    <th>شرح (بیمارستان)</th>
+                    <th>پزشک</th>
+                    <th>فاکتور</th>
+                    <th>مبلغ بدهی</th>
+                    <th>تاریخ ایجاد</th>
+                    <th>وضعیت پرداخت</th>
+                    <th>تاریخ پرداخت</th>
+                    <th>کد پیگیری</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in filteredDebits)
+                {
+                    <tr class="@GetRowClass(item.IsPayed)">
+                        <td>@item.FullName</td>
+                        <td>@item.NationCode</td>
+                        <td>@item.Mobile</td>
+                        <td>@item.Description</td>
+                        <td>@item.DoctorName</td>
+                        <td>@item.FactorNumber</td>
+                        <td>@item.DebitAmount.ToString("N0") ریال</td>
+                        <td>@item.CreateDate.ToPersianDate()</td>
+                        <td>@(item.IsPayed ? "پرداخت شده" : "پرداخت نشده")</td>
+                        <td>@(item.IsPayed ? item.PayDate.Value.ToPersianDate() : "-")</td>
+                        <td>@item.ResultCode</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    private List<Debit> allDebits = new();
+    private List<Debit> filteredDebits = new();
+
+    private FilterModel filter = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if(firstRender)
+        {
+            allDebits = (await DebitRepository.GetAllDebitsAsync2()).OrderByDescending(d => d.CreateDate).ToList();
+            filteredDebits = allDebits;
+        }
+    }
+
+
+    private async Task ApplyFilter()
+    {
+        var query = allDebits.AsQueryable();
+
+        if (filter.StartDate.HasValue)
+            query = query.Where(d => d.CreateDate >= filter.StartDate.Value);
+
+        if (filter.EndDate.HasValue)
+            query = query.Where(d => d.CreateDate <= filter.EndDate.Value.AddDays(1));
+
+        if (filter.PaymentStatus == 1)
+            query = query.Where(d => d.IsPayed);
+        else if (filter.PaymentStatus == 2)
+            query = query.Where(d => !d.IsPayed);
+
+        filteredDebits = query.ToList();
+    }
+    private async Task DownloadExcel()
+    {
+        var data = ExportDebitsToExcel(filteredDebits);
+        var fileName = $"Debits_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+
+        await JSRuntime.InvokeVoidAsync(
+            "saveAsFile",
+            fileName,
+            Convert.ToBase64String(data)
+        );
+    }
+    private byte[] ExportDebitsToExcel(List<Debit> debits)
+    {
+        // تنظیم LicenseContext (برای نسخههای جدید EPPlus)
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+        using var package = new ExcelPackage();
+        var worksheet = package.Workbook.Worksheets.Add("Debits");
+
+        // افزودن هدرها
+        worksheet.Cells[1, 1].Value = "نام و نام خانوادگی";
+        worksheet.Cells[1, 2].Value = "کد ملی";
+        worksheet.Cells[1, 3].Value = "موبایل";
+        worksheet.Cells[1, 4].Value = "شرح (بیمارستان)";
+        worksheet.Cells[1, 5].Value = "پزشک";
+        worksheet.Cells[1, 6].Value = "فاکتور";
+        worksheet.Cells[1, 7].Value = "مبلغ بدهی";
+        worksheet.Cells[1, 8].Value = "وضعیت پرداخت";
+        worksheet.Cells[1, 9].Value = "تاریخ پرداخت";
+        worksheet.Cells[1, 10].Value = "کد پیگیری";
+
+        // پر کردن دادهها
+        int row = 2;
+        foreach (var debit in debits)
+        {
+            worksheet.Cells[row, 1].Value = debit.FullName;
+            worksheet.Cells[row, 2].Value = debit.NationCode;
+            worksheet.Cells[row, 3].Value = debit.Mobile;
+            worksheet.Cells[row, 4].Value = debit.Description;
+            worksheet.Cells[row, 5].Value = debit.DoctorName;
+            worksheet.Cells[row, 6].Value = debit.FactorNumber;
+            worksheet.Cells[row, 7].Value = debit.DebitAmount.ToString("N0");
+            worksheet.Cells[row, 8].Value = debit.IsPayed ? "پرداخت شده" : "پرداخت نشده";
+            worksheet.Cells[row, 9].Value = (debit.IsPayed ? debit.PayDate.Value.ToPersianDate() : "-");
+            worksheet.Cells[row, 10].Value = debit.ResultCode;
+            row++;
+        }
+
+        // فرمتدهی خودکار ستونها
+        worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
+
+        return package.GetAsByteArray();
+    }
+    private async void _selectedDateFrom(ChangeEventArgs input)
+    {
+        filter.StartDate = Convert.ToDateTime(input.Value);
+    }
+    private async void _selectedDateTo(ChangeEventArgs input)
+    {
+        filter.EndDate = Convert.ToDateTime(input.Value);
+    }
+
+    private void ClearFilter()
+    {
+        filter = new FilterModel();
+        filteredDebits = allDebits;
+    }
+    private void BackToMain()
+    {
+        Navigation.NavigateTo("/manage/manage-debit");
+    }
+    private string GetRowClass(bool isPayed) => isPayed ? "paid-true" : "paid-false";
+
+    public class FilterModel
+    {
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int PaymentStatus { get; set; } // 0=All, 1=Paid, 2=Unpaid
+    }
+}

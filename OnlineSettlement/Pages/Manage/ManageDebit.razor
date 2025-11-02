@@ -1,0 +1,195 @@
+﻿@page "/manage/manage-debit"
+@using OnlineSettlement.Data
+@using OnlineSettlement.Model
+@inject IDebitRepository DebitRepository
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject IConfiguration config
+
+<style>
+    body {
+    direction: rtl;
+    }
+</style>
+
+<h3 class="mb-4">مدیریت صورتحساب ها</h3>
+
+@if (!loggedIn)
+{
+    <div style="width:350px; align-items:center;">
+
+        <div style="direction:rtl; align-content:center;">
+            <div class="form-group">
+                <label for="userName">نام کاربری</label>
+                <input type="text" id="userName" maxlength="25" class="form-control" @bind="UserName" style="width:70%;" />
+            </div>
+
+            <div class="form-group">
+                <label for="password">رمز عبور</label>
+                <input id="password" type="password" maxlength="30" class="form-control" @bind="Password" style="width:70%;" />
+            </div>
+            <div style="direction:rtl; align-content:flex-start; text-align:right; padding-top:10px;">
+                <button type="submit" class="btn btn-primary" @onclick="Login">ورود به سیستم</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (loggedIn)
+{
+    <!-- دکمه افزودن -->
+    <div class="mb-4">
+        <button class="btn btn-success" @onclick="() => ShowAddDebitModal()">افزودن بدهی جدید</button>
+        <button class="btn btn-success" @onclick="() => GoToReport()">گزارش پرداختی ها</button>
+    </div>
+
+    <!-- جدول لیست بدهی‌ها -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>شناسه</th>
+                    <th>نام کامل</th>
+                    <th>کد ملی</th>
+                    <th>مبلغ (ریال)</th>
+                    <th>شرح (بیمارستان)</th>
+                    <th>پزشک</th>
+                    <th>فاکتور</th>
+                    <th>موبایل</th>
+                    <th>لینک پرداخت</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var debit in debits)
+                {
+                    <tr>
+                        <td>@debit.DebitId</td>
+                        <td>@debit.FullName</td>
+                        <td>@debit.NationCode</td>
+                        <td>@debit.DebitAmount.ToString("N0")</td>
+                        <td>@(debit.Description)</td>
+                        <td>@debit.DoctorName</td>
+                        <td>@debit.FactorNumber</td>
+                        <td>@(debit.Mobile)</td>
+                        <td>@CreatePayLink(debit)</td>
+                        <td>
+                            <button class="btn btn-sm btn-warning me-2" 
+                            @onclick="() => ShowEditDebitModal(debit)">ویرایش</button>
+                            @if (!debit.IsPayed)
+                            {
+                                <button class="btn btn-sm btn-primary me-2" 
+                                @onclick="() => SendSms(debit)">ارسال پیامک</button>
+                                <button class="btn btn-sm btn-danger" 
+                                @onclick="async () => await DeleteDebit(debit)">حذف</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <AddEditDebitModal @ref="addEditDebitModal" OnDebitChanged="RefreshData" />
+}
+
+@code {
+    private List<Debit> debits = new();
+    private bool loggedIn = false;
+    private string UserName = "";
+    private string Password = "";
+    private AddEditDebitModal addEditDebitModal;
+
+    // protected override async Task OnInitializedAsync()
+    // {
+    //     await LoadData();
+    // }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        //return base.OnAfterRenderAsync(firstRender);
+        if(firstRender)
+        {
+            await LoadData();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadData()
+    {
+        debits = (await DebitRepository.GetAllDebitsAsync()).Where(x=> !x.IsPayed).TakeLast(50).ToList();
+    }
+
+    private async Task Login()
+    {
+        if (UserName.ToLower() == "admin" && Password == "123456")
+        {
+            loggedIn = true;
+            await LoadData();
+            await InvokeAsync(StateHasChanged);
+        }
+        else
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "اطلاعات ورود نامعتبر است!");
+        }
+    }
+
+    private void ShowAddDebitModal()
+    {
+        addEditDebitModal.ShowAddModal();
+    }
+
+    private void ShowEditDebitModal(Debit debit)
+    {
+        addEditDebitModal.ShowEditModal(debit.DebitId);
+    }
+
+    private async Task DeleteDebit(Debit debit)
+    {
+        bool confirm = await JSRuntime.InvokeAsync<bool>("confirm", $"آیا از حذف {debit.FullName} مطمئنید؟");
+        if (confirm)
+        {
+            await DebitRepository.DeleteDebitAsync(debit.DebitId);
+            await LoadData();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string CreatePayLink(Debit CurrentDebit)
+    {
+        string payLink = config["MyUrl"].ToString();
+        payLink += $"/pay/{CurrentDebit.LinkId}";
+        return payLink;
+    }
+
+    private async Task SendSms(Debit CurrentDebit)
+    {
+        try
+        {
+            SmsHelper smshelper = new SmsHelper();
+            //smshelper.LikeToLikeSend(CurrentDebit.Mobile, message);
+            var result = await smshelper.SendConfirmCode(CurrentDebit.Mobile, CurrentDebit.FullName, Convert.ToInt64(CurrentDebit.DebitAmount), CurrentDebit.LinkId);
+            if(result.IsSuccessful)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "پیامک با موفقیت ارسال شد");
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "خطا در ارسال پیامک"+" "+result.ResultMessage);
+            }
+        }
+        catch(Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "خطا در ارسال پیامک"+ex.Message);
+        }
+
+    }
+    private void GoToReport()
+    {
+        Navigation.NavigateTo("/manage/debit-report");
+    }
+    private async Task RefreshData()
+    {
+        await LoadData();
+        StateHasChanged();
+    }
+}

@@ -1,0 +1,143 @@
+﻿@using OnlineSettlement.Model
+@using OnlineSettlement.Data
+@using OnlineSettlement.Pages.Component
+
+
+@inject IDebitRepository DebitRepository
+@inject IJSRuntime JSRuntime
+@inject IConfiguration config
+
+<div class="modal @(ShowModal ? "d-block" : "d-none")" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@(IsEditMode ? "ویرایش بدهی" : "بدهی جدید")</h5>
+            </div>
+
+            <EditForm Model="@CurrentDebit" OnValidSubmit="@HandleSubmit">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>نام کامل</label>
+                        <InputText @bind-Value="CurrentDebit.FullName" class="form-control" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>کد ملی</label>
+                        <InputText @bind-Value="CurrentDebit.NationCode" class="form-control" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>موبایل</label>
+                        <InputText @bind-Value="CurrentDebit.Mobile" class="form-control" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>مبلغ (ریال)</label>
+                        @*                         <InputNumber @bind-Value="CurrentDebit.DebitAmount" class="form-control" />*@
+                        <CurrencyInput Value="DebitAmount" ValueChanged="DebitAmountChanged" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>شرح (بیمارستان)</label>
+                        <InputText @bind-Value="CurrentDebit.Description" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>نام دکتر</label>
+                        <InputText @bind-Value="CurrentDebit.DoctorName" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>شماره فاکتور</label>
+                        <InputText @bind-Value="CurrentDebit.FactorNumber" class="form-control" />
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">ذخیره</button>
+                    <button type="button" class="btn btn-secondary" 
+                    @onclick="CloseModal">انصراف</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback OnDebitChanged { get; set; }
+
+    private Debit CurrentDebit { get; set; } = new();
+    private bool ShowModal { get; set; }
+    private bool IsEditMode { get; set; }
+    private string DebitAmount{ get; set; }
+
+    public void ShowAddModal()
+    {
+        CurrentDebit = new Debit 
+        { 
+            CreateDate = DateTime.Now,
+            PayDate = DateTime.Now
+        };
+        IsEditMode = false;
+        ShowModal = true;
+    }
+
+    public async void ShowEditModal(int debitId)
+    {
+        CurrentDebit = await DebitRepository.GetDebitByIdAsync(debitId) ?? new Debit();
+        DebitAmount = CurrentDebit.DebitAmount.ToString();
+        IsEditMode = true;
+        ShowModal = true;
+        StateHasChanged();
+    }
+    private void DebitAmountChanged(string value)
+    {
+        if (!string.IsNullOrEmpty(value))
+        {
+            DebitAmount = value;
+            CurrentDebit.DebitAmount = decimal.Parse(value.ToString());
+            InvokeAsync(StateHasChanged);
+        }
+    }
+    private async Task HandleSubmit()
+    {
+        if (IsEditMode)
+        {
+            await DebitRepository.UpdateDebitAsync(CurrentDebit);
+        }
+        else
+        {
+            CreatePayLinkId();
+            await DebitRepository.AddDebitAsync(CurrentDebit);
+            await SendSms();
+        }
+
+        CloseModal();
+        await OnDebitChanged.InvokeAsync();
+    }
+    private void CreatePayLinkId()
+    {
+        CurrentDebit.LinkId= Guid.NewGuid().ToString().Substring(0, 18);
+    }
+    private async Task SendSms()
+    {
+        // string payLink = config["MyUrl"].ToString();
+        // payLink += $"/pay/{CurrentDebit.LinkId}";
+
+        // string message = $"جناب آقای {CurrentDebit.FullName}"+'\n'+
+        //                     $"صورتحساب شما نزد جراحی هوشمند پارسه {CurrentDebit.DebitAmount} می باشد"+'\n'+
+        //                     $"لینک پرداخت صورتحساب"+'\n'+
+        //                     payLink;
+
+        SmsHelper smshelper=new SmsHelper();
+        //smshelper.LikeToLikeSend(CurrentDebit.Mobile, message);
+        await smshelper.SendConfirmCode(CurrentDebit.Mobile, CurrentDebit.FullName, Convert.ToInt64(CurrentDebit.DebitAmount), CurrentDebit.LinkId);
+    }
+    private void CloseModal()
+    {
+        ShowModal = false;
+        StateHasChanged();
+    }
+}

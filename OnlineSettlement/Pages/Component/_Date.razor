@@ -1,0 +1,70 @@
+﻿@using System.Globalization
+@*datepickerlanguage.js IS NECESSARY IN PAGE*@
+
+@inject IJSRuntime js
+
+<div id="@AppId" style="max-width:400px;">
+    <date-picker mode="single"   type="date" 
+                 :auto-submit="true" :locale-config="fa"
+                 @close="show=false" :column="1" @submit="submit"
+                 style="--primary-color: #2196f3; --secondary-color:  #D6DCF9;" />
+</div>
+
+
+<input id="@selectedDateId" type="hidden" @onchange="_selectedDate" />
+
+<script src="scripts/datepickerLanguage.js" suppress-error="BL9992"></script>
+@code{
+
+
+    string AppId { get; set; } = "app_" + Guid.NewGuid().ToString().Replace("-", "");
+
+
+    string date_pickerId { get; set; } = "date_picker_" + Guid.NewGuid().ToString().Replace("-", "");
+
+    string selectedDateId { get; set; } = "selectedDate_" + Guid.NewGuid().ToString().Replace("-", "");
+
+    [Parameter]
+    public EventCallback<ChangeEventArgs> Event_SelectedDate { get; set; }
+
+
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+
+        if (!firstRender)
+            return;
+
+      //  await js.InvokeVoidAsync("SetIdAndlanguage", AppId, date_pickerId, "fa");
+        await js.InvokeVoidAsync("loadVue", AppId, selectedDateId);
+
+
+
+        SetDefaultDate();
+
+    }
+
+    async void SetDefaultDate()
+    {
+        DateTime currentDate = DateTime.Now;
+
+      
+            PersianCalendar persianCalendar = new PersianCalendar();
+            int persianYear = persianCalendar.GetYear(currentDate);
+            int persianMonth = persianCalendar.GetMonth(currentDate);
+            int persianDay = persianCalendar.GetDayOfMonth(currentDate);
+            //await js.InvokeVoidAsync("SetDefaultDate", $"{persianYear}-{persianMonth}-{persianDay}", date_pickerId);
+        
+
+    }
+
+    async void _selectedDate(ChangeEventArgs input)
+    {
+       await  Event_SelectedDate.InvokeAsync(input);
+    }
+
+}
+
+
+@*Note:*@
+ @*datepickerlanguage.js IS NECESSARY IN PAGE*@
